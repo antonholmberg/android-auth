@@ -32,6 +32,7 @@ import android.util.Log;
 
 import com.spotify.sdk.android.auth.app.SpotifyAuthHandler;
 
+import java.security.NoSuchAlgorithmException;
 import java.util.ArrayList;
 import java.util.List;
 
@@ -268,7 +269,16 @@ public final class AuthorizationClient {
      * @throws IllegalArgumentException if any of the arguments is null
      */
     public static Intent createLoginActivityIntent(Activity contextActivity, AuthorizationRequest request) {
-        Intent intent = LoginActivity.getAuthIntent(contextActivity, request);
+        if (contextActivity == null) {
+            throw new IllegalArgumentException("Context activity cannot be null");
+        }
+        if (request == null) {
+            throw new IllegalArgumentException("Authorization request cannot be null");
+        }
+        
+        // Append PKCE to TOKEN requests before creating intent
+        final AuthorizationRequest processedRequest = appendPkceIfTokenRequest(request);
+        Intent intent = LoginActivity.getAuthIntent(contextActivity, processedRequest);
         intent.addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP);
         return intent;
     }
@@ -398,12 +408,84 @@ public final class AuthorizationClient {
     void authorize(AuthorizationRequest request) {
         if (mAuthorizationPending) return;
         mAuthorizationPending = true;
+        
+        // Validate TOKEN requests have PKCE and convert to CODE for handlers
+        final AuthorizationRequest processedRequest = validateAndConvertTokenRequest(request);
+        
         for (AuthorizationHandler authHandler : mAuthorizationHandlers) {
-            if (tryAuthorizationHandler(authHandler, request)) {
+            if (tryAuthorizationHandler(authHandler, processedRequest)) {
                 mCurrentHandler = authHandler;
                 break;
             }
         }
+    }
+
+    /**
+     * Appends PKCE information to TOKEN requests before starting LoginActivity.
+     *
+     * @param request The original authorization request
+     * @return The request with PKCE appended if it's a TOKEN request
+     */
+    private static AuthorizationRequest appendPkceIfTokenRequest(AuthorizationRequest request) {
+        // Check if this is a TOKEN request
+        if ("token".equals(request.getResponseType())) {
+            Log.d(TAG, "Appending PKCE to TOKEN request");
+            
+            try {
+                // Generate PKCE information
+                final PKCEInformation pkceInfo = PKCEInformationFactory.create();
+                
+                // Create a new request with PKCE appended (keep TOKEN type for now)
+                return new AuthorizationRequest.Builder(
+                        request.getClientId(),
+                        AuthorizationResponse.Type.TOKEN,
+                        request.getRedirectUri())
+                        .setState(request.getState())
+                        .setScopes(request.getScopes())
+                        .setCampaign(request.getCampaign())
+                        .setPkceInformation(pkceInfo)
+                        .build();
+                        
+            } catch (final NoSuchAlgorithmException e) {
+                Log.e(TAG, "Failed to generate PKCE information", e);
+                throw new RuntimeException("Failed to generate PKCE information: " + e.getMessage(), e);
+            }
+        }
+        
+        // Return original request if not TOKEN type
+        return request;
+    }
+
+    /**
+     * Validates TOKEN requests have PKCE and converts them to CODE requests for handlers.
+     *
+     * @param request The authorization request
+     * @return The processed request (converted to CODE if TOKEN with PKCE)
+     */
+    private AuthorizationRequest validateAndConvertTokenRequest(AuthorizationRequest request) {
+        // Check if this is a TOKEN request
+        if ("token".equals(request.getResponseType())) {
+            if (request.getPkceInformation() == null) {
+                throw new IllegalStateException(
+                    "TOKEN requests must have PKCE information. This indicates a bug in the authorization flow.");
+            }
+            
+            Log.d(TAG, "Converting TOKEN request to CODE request for handlers");
+            
+            // Convert to CODE request for handlers
+            return new AuthorizationRequest.Builder(
+                    request.getClientId(),
+                    AuthorizationResponse.Type.CODE,
+                    request.getRedirectUri())
+                    .setState(request.getState())
+                    .setScopes(request.getScopes())
+                    .setCampaign(request.getCampaign())
+                    .setPkceInformation(request.getPkceInformation())
+                    .build();
+        }
+        
+        // Return original request if not TOKEN type
+        return request;
     }
 
     /**

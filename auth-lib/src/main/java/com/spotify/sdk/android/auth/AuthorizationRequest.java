@@ -58,6 +58,7 @@ public class AuthorizationRequest implements Parcelable {
     private final boolean mShowDialog;
     private final Map<String, String> mCustomParams;
     private final String mCampaign;
+    private final PKCEInformation mPkceInformation;
 
     /**
      * Use this builder to create an {@link AuthorizationRequest}
@@ -74,6 +75,7 @@ public class AuthorizationRequest implements Parcelable {
         private String[] mScopes;
         private boolean mShowDialog;
         private String mCampaign;
+        private PKCEInformation mPkceInformation;
         private final Map<String, String> mCustomParams = new HashMap<>();
 
         public Builder(String clientId, AuthorizationResponse.Type responseType, String redirectUri) {
@@ -123,9 +125,14 @@ public class AuthorizationRequest implements Parcelable {
             return this;
         }
 
+        public Builder setPkceInformation(PKCEInformation pkceInformation) {
+            mPkceInformation = pkceInformation;
+            return this;
+        }
+
         public AuthorizationRequest build() {
             return new AuthorizationRequest(mClientId, mResponseType, mRedirectUri,
-                    mState, mScopes, mShowDialog, mCustomParams, mCampaign);
+                    mState, mScopes, mShowDialog, mCustomParams, mCampaign, mPkceInformation);
         }
     }
 
@@ -138,6 +145,7 @@ public class AuthorizationRequest implements Parcelable {
         mShowDialog = source.readByte() == 1;
         mCustomParams = new HashMap<>();
         mCampaign = source.readString();
+        mPkceInformation = source.readParcelable(PKCEInformation.class.getClassLoader());
         Bundle bundle = source.readBundle(getClass().getClassLoader());
         for (String key : bundle.keySet()) {
             mCustomParams.put(key, bundle.getString(key));
@@ -177,6 +185,10 @@ public class AuthorizationRequest implements Parcelable {
     @NonNull
     public String getMedium() { return ANDROID_SDK; }
 
+    public PKCEInformation getPkceInformation() {
+        return mPkceInformation;
+    }
+
     private AuthorizationRequest(String clientId,
                                  AuthorizationResponse.Type responseType,
                                  String redirectUri,
@@ -184,7 +196,8 @@ public class AuthorizationRequest implements Parcelable {
                                  String[] scopes,
                                  boolean showDialog,
                                  Map<String, String> customParams,
-                                 String campaign) {
+                                 String campaign,
+                                 PKCEInformation pkceInformation) {
 
         mClientId = clientId;
         mResponseType = responseType.toString();
@@ -194,6 +207,7 @@ public class AuthorizationRequest implements Parcelable {
         mShowDialog = showDialog;
         mCustomParams = customParams;
         mCampaign = campaign;
+        mPkceInformation = pkceInformation;
     }
 
     public Uri toUri() {
@@ -223,6 +237,11 @@ public class AuthorizationRequest implements Parcelable {
             }
         }
 
+        if (mPkceInformation != null) {
+            uriBuilder.appendQueryParameter(AccountsQueryParameters.CODE_CHALLENGE, mPkceInformation.getChallenge());
+            uriBuilder.appendQueryParameter(AccountsQueryParameters.CODE_CHALLENGE_METHOD, mPkceInformation.getCodeChallengeMethod());
+        }
+
         return uriBuilder.build();
     }
 
@@ -249,6 +268,7 @@ public class AuthorizationRequest implements Parcelable {
         dest.writeStringArray(mScopes);
         dest.writeByte((byte) (mShowDialog ? 1 : 0));
         dest.writeString(mCampaign);
+        dest.writeParcelable(mPkceInformation, flags);
 
         Bundle bundle = new Bundle();
         for (Map.Entry<String, String> entry : mCustomParams.entrySet()) {
